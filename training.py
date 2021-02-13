@@ -16,8 +16,10 @@ class DataLoaderSegmentation(data.Dataset):
         self.img_files = []
         self.mask_files_with_corresponding_img = []
         for mask_path in self.mask_files:
+            base_file_name = os.path.basename(mask_path)
             img_path = os.path.join(main_folder_path, os.path.basename(mask_path).split('_')[0] + '.jpg')
-            if os.path.exists(img_path):
+            # Second clause is so we only take half the pics
+            if os.path.exists(img_path) and base_file_name[0] in '0123':
                 self.img_files.append(img_path)
                 self.mask_files_with_corresponding_img.append(mask_path)
         self.mask_files = None
@@ -28,13 +30,16 @@ class DataLoaderSegmentation(data.Dataset):
         mask_path = self.mask_files_with_corresponding_img[index]
         x_img = Image.open(img_path).convert("RGB")
         x_img = x_img.resize((IMG_SIZE, IMG_SIZE))
-        label = Image.open(mask_path).convert("RGB")
+        label = Image.open(mask_path).convert("1")
         # TODO: this will certainly introduce bugs
-        background = Image.new('RGB', label.size, (255, 255, 255))
+        background = Image.new('1', label.size, 0)
         background.paste(label)
         background = background.resize((IMG_SIZE, IMG_SIZE))
         image_1 = torchvision.transforms.PILToTensor()(x_img)
         image_2 = torchvision.transforms.PILToTensor()(background)
+        x_img.close()
+        label.close()
+        background.close()
         return image_1, image_2
 
     def __len__(self):
@@ -78,18 +83,17 @@ def train(model, train_dl, valid_dl, loss_fn, optimizer, acc_fn, epochs=1):
                     # need for torch.no_grad in this training pass
                     loss.backward()
                     optimizer.step()
-                    # scheduler.step()
 
                 else:
                     with torch.no_grad():
                         outputs = model(x)
                         loss = loss_fn(outputs, y.long())
 
-                # stats - whatever is the phase
                 acc = acc_fn(outputs, y)
 
                 running_acc += acc * dataloader.batch_size
-                running_loss += loss * dataloader.batch_size
+                running_loss += loss.detach().item() * dataloader.batch_size
+                del x, y
 
             epoch_loss = running_loss / len(dataloader.dataset)
             epoch_acc = running_acc / len(dataloader.dataset)
@@ -112,12 +116,14 @@ def acc_metric(pred_b, yb):
 def load_images():
     train_dataset = DataLoaderSegmentation('oid/train/', 'oid/train_segments_people')
     validation_dataset = DataLoaderSegmentation('oid/validation', 'oid/validation_segments_people')
-    return data.DataLoader(train_dataset, batch_size=1), data.DataLoader(validation_dataset, batch_size=1)
+    train_loader = data.DataLoader(train_dataset, batch_size=16, num_workers=4)
+    test_loader = data.DataLoader(validation_dataset, batch_size=16, num_workers=4)
+    return train_loader, test_loader
 
 
 def main():
     train_dl, valid_dl = load_images()
-    network = UNET(3, 3)
+    network = UNET(3, 1)
     loss_fn = torch.nn.MSELoss()
     optimizer = torch.optim.Adam(network.parameters(), lr=0.01)
     train_loss, validation_loss = train(network, train_dl, valid_dl, loss_fn, optimizer, acc_metric,
