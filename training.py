@@ -7,6 +7,7 @@ import torch.utils.data as data
 import glob
 import os
 from PIL import Image
+import warnings
 
 
 class DataLoaderSegmentation(data.Dataset):
@@ -122,13 +123,15 @@ def load_images():
 
 
 def main():
-    train_dl, valid_dl = load_images()
-    network = UNET(3, 1)
-    loss_fn = torch.nn.MSELoss()
-    optimizer = torch.optim.Adam(network.parameters(), lr=0.01)
-    train_loss, validation_loss = train(network, train_dl, valid_dl, loss_fn, optimizer, acc_metric,
-                                        epochs=50)
-    print(train_loss, validation_loss)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        train_dl, valid_dl = load_images()
+        network = UNET(3, 1)
+        loss_fn = torch.nn.MSELoss()
+        optimizer = torch.optim.Adam(network.parameters(), lr=0.01)
+        train_loss, validation_loss = train(network, train_dl, valid_dl, loss_fn, optimizer, acc_metric,
+                                            epochs=50)
+        print(train_loss, validation_loss)
 
 
 if __name__ == '__main__':
