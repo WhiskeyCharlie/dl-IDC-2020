@@ -86,8 +86,8 @@ def train(model, train_dl, valid_dl, loss_fn, optimizer, acc_fn, epochs=1):
 
                 else:
                     with torch.no_grad():
-                        outputs = model(x)
-                        loss = loss_fn(outputs, y.long())
+                        outputs = model(x.float())
+                        loss = loss_fn(outputs.squeeze(1), y.float().squeeze(1))
 
                 acc = acc_fn(outputs, y)
 
