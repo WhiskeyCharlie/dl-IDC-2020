@@ -1,15 +1,15 @@
+import time
 from typing import Union
+
+import cv2
+import numpy as np
+import pyfakewebcam
+import torch
+from PIL import Image
+from torchvision import transforms
 
 from model import UNET
 from training import IMAGE_SIZE
-from PIL import Image
-import torch
-from torchvision import transforms
-import matplotlib.pyplot as plt
-import pyfakewebcam
-import cv2
-import time
-import numpy as np
 
 WEBCAM_OUTPUT_RESOLUTION = (640, 480)
 
@@ -19,15 +19,19 @@ def _normalize_image_to_tensor(img: Image):
     return transforms.PILToTensor()(resized_img).float() / 255
 
 
-def remove_background_single_image(src_image: Union[str, Image.Image], model: UNET) -> Image:
+def remove_background_single_image(src_image: Union[str, Image.Image], model: UNET, background_image=None) -> Image:
     if type(src_image) == str:
         img = Image.open(src_image)
     else:
         img = src_image
+    if background_image is None:
+        background = Image.new('RGBA', img.size, (0, 255, 0))
+    else:
+        background = Image.open(background_image)
+        background = background.resize(img.size)
     img_tensor = _normalize_image_to_tensor(img).unsqueeze(0)
     mask = torch.gt(model(img_tensor).squeeze(0), 0.5)
     mask_img = transforms.ToPILImage()(mask.int() * 255).convert('L').resize(img.size, resample=Image.BICUBIC)
-    background = Image.new('RGBA', img.size, (0, 255, 0))
     img.convert('RGBA')
     result = Image.composite(img, background, mask_img)
     background.paste(img)
@@ -45,7 +49,9 @@ def main():
         if not ret:
             print('failure')
             continue
-        result = remove_background_single_image(Image.fromarray(frame), model)
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        result = remove_background_single_image(Image.fromarray(frame), model,
+                                                background_image='./images/background_nature.jpeg')
         out_cam.schedule_frame(np.asarray(result))
         time.sleep(1 / 30)
     del cam
