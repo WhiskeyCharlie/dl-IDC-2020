@@ -1,3 +1,4 @@
+import sys
 import time
 from typing import Union
 
@@ -12,6 +13,9 @@ from model import UNET
 from training import IMAGE_SIZE
 
 WEBCAM_OUTPUT_RESOLUTION = (640, 480)
+BACKGROUND_IMAGE = './images/background_nature.jpeg'
+MODEL_PATH = './saved_models/unet_64x_5e_2021-02-16-22-15_c.pt'
+DESIRED_FPS = 30
 
 
 def _normalize_image_to_tensor(img: Image):
@@ -40,20 +44,20 @@ def remove_background_single_image(src_image: Union[str, Image.Image], model: UN
 
 def main():
     model = UNET(3, 1)
-    model.load_state_dict(torch.load('./saved_models/unet.pt'))
+    model.load_state_dict(torch.load(MODEL_PATH))
     model.eval()
     cam = cv2.VideoCapture(0)
     out_cam = pyfakewebcam.FakeWebcam('/dev/video2', *WEBCAM_OUTPUT_RESOLUTION)
     while True:
         ret, frame = cam.read()
         if not ret:
-            print('failure')
+            print('Failed to read frame from actual webcam', file=sys.stderr)
             continue
+        # Open CV used BGR instead of RGB, so we correct that with this line (otherwise I look blue)
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        result = remove_background_single_image(Image.fromarray(frame), model,
-                                                background_image='./images/background_nature.jpeg')
+        result = remove_background_single_image(Image.fromarray(frame), model, background_image=BACKGROUND_IMAGE)
         out_cam.schedule_frame(np.asarray(result))
-        time.sleep(1 / 30)
+        time.sleep(1 / DESIRED_FPS)
     del cam
 
 

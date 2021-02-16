@@ -1,21 +1,29 @@
+import datetime
 import time
 
+import numpy as np
 import torch
 import torchvision
 from model import UNET
 import torch.utils.data as data
 import glob
 import os
+import sys
 from PIL import Image
 import warnings
 import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1 import ImageGrid
+from tqdm import tqdm
 
 BATCH_SIZE = 32
 IMAGE_SIZE = 64
-NUM_EPOCHS = 100
+NUM_EPOCHS = 5
 VALID_EVAL = True
 RESIZE_ALL = False
+TRAIN_MODE = True
+CONT_TRAIN = True
+CONT_MODEL = './saved_models/unet_64x_100e.pt'
+EVAL_MODEL = './saved_models/unet_128x_5e_2021-02-16-17-45.pt'
 
 
 class DataLoaderSegmentation(data.DataLoader):
@@ -51,13 +59,10 @@ class DatasetSegmentation(data.Dataset):
 
     def __getitem__(self, index):
         if index not in self.cache:
-            # if index < 10:
-            #     print('miss', len(self.cache))
             img_path = self.img_files[index]
             mask_path = self.mask_files_with_corresponding_img[index]
             x_img = Image.open(img_path).convert("RGB")
             label = Image.open(mask_path).convert("1")
-            # TODO: this will certainly introduce bugs
             background = Image.new('1', label.size, 0)
             background.paste(label)
             image_1 = torchvision.transforms.PILToTensor()(x_img)
@@ -75,15 +80,12 @@ class DatasetSegmentation(data.Dataset):
         return len(self.img_files)
 
 
-def train(model, train_dl, valid_dl, loss_fn, optimizer, acc_fn, epochs=1):
+def train(model, train_dl, valid_dl, loss_fn, optimizer, metrics_fn, epochs=1):
     start = time.time()
 
     train_loss, valid_loss = [], []
 
-    for epoch in range(epochs):
-        print('Epoch {}/{}'.format(epoch, epochs - 1))
-        print('-' * 10)
-
+    for _ in tqdm(range(epochs), total=epochs, unit='epoch'):
         for phase in ['train', 'valid']:
             if phase == 'train':
                 model.train(True)  # Set training mode = true
@@ -93,10 +95,10 @@ def train(model, train_dl, valid_dl, loss_fn, optimizer, acc_fn, epochs=1):
                 dataloader = valid_dl
 
             running_loss = 0.0
-            running_acc = 0.0
+            running_acc = torch.tensor([0, 0, 0, 0], dtype=torch.float64)
 
             # iterate over data
-            for idx, (x, y) in enumerate(dataloader):
+            for x, y in tqdm(dataloader, leave=False):
 
                 # forward pass
                 if phase == 'train':
@@ -115,15 +117,23 @@ def train(model, train_dl, valid_dl, loss_fn, optimizer, acc_fn, epochs=1):
                         outputs = model(x)
                         loss = loss_fn(outputs, y.float())
 
-                acc = acc_fn(outputs, y)
+                batch_metrics = metrics_fn(outputs, y)
 
                 # Note: outputs.shape[0] not necessarily batch size, rather the number in this batch (<= batch_size)
-                running_acc += acc * outputs.shape[0]
+                running_acc += batch_metrics * outputs.shape[0]
                 running_loss += loss.detach().item() * outputs.shape[0]
             epoch_loss = running_loss / len(dataloader.dataset)
-            epoch_acc = running_acc / len(dataloader.dataset)
+            epoch_metrics = running_acc / len(dataloader.dataset)
 
-            print(f'{phase} Loss: {epoch_loss:.4f} Acc: {epoch_acc}')
+            print(f'{phase} Loss: {epoch_loss:.4f}')
+            for label, metric in zip(['TPR', 'FPR', 'TNR', 'FNR'], epoch_metrics):
+                print(f'\t>{label}: {metric.detach().item():0.2f}')
+            epoch_metrics_arr = np.asarray(epoch_metrics)
+            tp, fp, tn, fn = epoch_metrics_arr
+            accuracy = (tp + tn) / (tp + fp + tn + fn)
+            print(f'\t>Acc: {accuracy:0.2f}')
+            print(f'\t>Inf: {informedness(epoch_metrics_arr):0.2f}')
+            print(f'\t>Mcc: {matthews_correlation_coefficient(epoch_metrics_arr):0.2f}')
 
             train_loss.append(epoch_loss) if phase == 'train' else valid_loss.append(epoch_loss)
         curr_time = time.time()
@@ -134,22 +144,48 @@ def train(model, train_dl, valid_dl, loss_fn, optimizer, acc_fn, epochs=1):
     return train_loss, valid_loss
 
 
-def acc_metric(pred_b, yb):
+def informedness(metrics_arr):
+    tp, fp, tn, fn = metrics_arr
+    return (tp / (tp + fn)) + (tn / (tn + fp)) - 1
+
+
+def matthews_correlation_coefficient(metrics_arr):
+    tp, fp, tn, fn = metrics_arr
+    numerator = (tp * tn) - (fp * fn)
+    denominator = np.sqrt((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn))
+    if denominator == 0:
+        return 0
+    return numerator / denominator
+
+
+def metrics(pred_b, y_b) -> torch.Tensor:
     predicted_res = pred_b.clone().detach()
-    predicted_res -= pred_b.min(1, keepdim=True)[0]
-    predicted_res /= predicted_res.max(1, keepdim=True)[0]
     predicted_res = torch.gt(predicted_res, 0.5).detach()
     bool_pred_b = torch.gt(predicted_res, 0.5)
-    comparison = (bool_pred_b == yb).float()
-    acc = torch.mean(comparison)
+    int_pred_b = bool_pred_b.int()
+    int_y_b = y_b.int()
 
-    return acc.detach().item()
+    true_positive_tensor = int_pred_b & int_y_b
+    true_positive_rate = torch.mean(true_positive_tensor.float()).detach().item()
+
+    false_positive_tensor = int_pred_b & (1 - int_y_b)
+    false_positive_rate = torch.mean(false_positive_tensor.float()).detach().item()
+
+    true_negative_tensor = (1 - int_pred_b) & (1 - int_y_b)
+    true_negative_rate = torch.mean(true_negative_tensor.float()).detach().item()
+
+    false_negative_tensor = (1 - int_pred_b) & int_y_b
+    false_negative_rate = torch.mean(false_negative_tensor.float()).detach().mean()
+
+    return torch.tensor([true_positive_rate, false_positive_rate, true_negative_rate, false_negative_rate])
 
 
 def load_images():
     batch_size = BATCH_SIZE
-    train_dataset = DatasetSegmentation('oid/train_64/', 'oid/train_segments_people_64')
-    validation_dataset = DatasetSegmentation('oid/validation_64/', 'oid/validation_segments_people_64')
+    train_dataset = DatasetSegmentation(f'oid/train_{IMAGE_SIZE}/',
+                                        f'oid/train_segments_people_{IMAGE_SIZE}')
+    validation_dataset = DatasetSegmentation(f'oid/validation_{IMAGE_SIZE}/',
+                                             f'oid/validation_segments_people_{IMAGE_SIZE}')
     train_loader = DataLoaderSegmentation(train_dataset, batch_size=batch_size, num_workers=0, shuffle=True)
     test_loader = DataLoaderSegmentation(validation_dataset, batch_size=batch_size, num_workers=0)
     # Ugly hack to initialize the positive class counts.
@@ -158,9 +194,9 @@ def load_images():
     return train_loader, test_loader
 
 
-def evaluate_valid_images():
+def evaluate_valid_images(model_path='./unet.pt', evaluate_some_test=False):
     network = UNET(3, 1)
-    network.load_state_dict(torch.load('./unet.pt'))
+    network.load_state_dict(torch.load(model_path))
     network.eval()
     train_dl, valid_dl = load_images()
     for valid_img_batch, valid_mask_batch in valid_dl:
@@ -172,6 +208,19 @@ def evaluate_valid_images():
                                      predicted_mask.detach().permute(1, 2, 0)]):
                 ax.imshow(im)
             plt.show()
+    ctr = 0
+    if evaluate_some_test:
+        for valid_img_batch, valid_mask_batch in train_dl:
+            if ctr > 100:
+                break
+            predicted_batch = network(valid_img_batch).gt(0.01)
+            for valid_img, valid_mask, predicted_mask in zip(valid_img_batch, valid_mask_batch, predicted_batch):
+                grid = ImageGrid(plt.figure(figsize=(4, 4)), 111, nrows_ncols=(2, 2), axes_pad=0.1)
+                for ax, im in zip(grid, [valid_img.detach().permute(1, 2, 0),
+                                         valid_mask.detach().permute(1, 2, 0),
+                                         predicted_mask.detach().permute(1, 2, 0)]):
+                    ax.imshow(im)
+                plt.show()
 
 
 def resize_images(src_directory: str, target_directory: str, dimensions=(IMAGE_SIZE, IMAGE_SIZE)):
@@ -184,27 +233,54 @@ def resize_images(src_directory: str, target_directory: str, dimensions=(IMAGE_S
         src_img_contents.save(target_img_path)
 
 
+def get_sortable_timestamp():
+    return datetime.datetime.today().strftime('%Y-%m-%d-%H-%M')
+
+
 def main():
+    torch.set_num_threads(24)
+    print('Available Threads:', torch.get_num_threads())
     if RESIZE_ALL:
         resize_images('./oid/train/', f'./oid/train_{IMAGE_SIZE}')
+        print('Resized Training')
         resize_images('./oid/validation', f'./oid/validation_{IMAGE_SIZE}')
+        print('Resized Validation')
         resize_images('./oid/train_segments_people', f'./oid/train_segments_people_{IMAGE_SIZE}')
+        print('Resized Training Segments')
         resize_images('./oid/validation_segments_people', f'./oid/validation_segments_people_{IMAGE_SIZE}')
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        train_dl, valid_dl = load_images()
-        network = UNET(3, 1)
-        pos_weight = train_dl.positive_class_weight()
-        pw = torch.FloatTensor([1 / pos_weight])
-        loss_fn = torch.nn.BCEWithLogitsLoss(pos_weight=pw)
-        optimizer = torch.optim.Adam(network.parameters(), lr=0.01)
-        train_loss, validation_loss = train(network, train_dl, valid_dl, loss_fn, optimizer, acc_metric,
-                                            epochs=NUM_EPOCHS)
-        print(train_loss, validation_loss)
-        torch.save(network.state_dict(), './unet.pt')
+        print('Resized Validation Segments')
+        print('Done')
+        exit(0)
+    if TRAIN_MODE:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            train_dl, valid_dl = load_images()
+            network = UNET(3, 1)
+            if CONT_TRAIN:
+                # noinspection PyBroadException
+                try:
+                    loaded_dict = torch.load(CONT_MODEL)
+                    network.load_state_dict(loaded_dict)
+                except:
+                    print('Training Continuation failed', file=sys.stderr)
+                    exit(1)
+            pos_weight = train_dl.positive_class_weight()
+            pw = torch.FloatTensor([1 / pos_weight])
+            loss_fn = torch.nn.BCEWithLogitsLoss(pos_weight=pw)
+            optimizer = torch.optim.Adam(network.parameters(), lr=0.01)
+            train_loss, validation_loss = train(network, train_dl, valid_dl, loss_fn, optimizer, metrics,
+                                                epochs=NUM_EPOCHS)
+            print(f'Train: {train_loss}')
+            print(f'Valid: {validation_loss}')
+            cont_str = '_c' if CONT_TRAIN else ''
+            model_path = f'./saved_models/unet_{IMAGE_SIZE}x_{NUM_EPOCHS}e_{get_sortable_timestamp()}{cont_str}.pt'
+            torch.save(network.state_dict(), model_path)
+            if VALID_EVAL:
+                evaluate_valid_images(model_path)
+            exit(0)
 
     if VALID_EVAL:
-        evaluate_valid_images()
+        evaluate_valid_images(MODEL_TO_EVAL)
 
 
 if __name__ == '__main__':
