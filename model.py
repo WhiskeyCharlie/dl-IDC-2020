@@ -1,5 +1,6 @@
 from torch import nn
 import torch
+import torchvision
 
 
 class UNET(nn.Module):

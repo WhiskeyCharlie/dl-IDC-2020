@@ -9,3 +9,6 @@ val2017
 *.zip
 .idea/
 annotations_trainval2017
+images/
+saved_models/
+unet.pt
