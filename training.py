@@ -1,5 +1,6 @@
 import datetime
 import time
+from collections import defaultdict
 from typing import List
 
 import numpy as np
@@ -8,6 +9,7 @@ import torchvision
 from model import UNET
 import torch.utils.data as data
 import torch.nn.functional as F
+from torch.optim.lr_scheduler import StepLR
 import glob
 import os
 import sys
@@ -125,12 +127,13 @@ class DatasetSegmentationOI(data.Dataset):
         return len(self.img_files)
 
 
-def train(model, train_dl, valid_dl, loss_fn, optimizer, metrics_fn, epochs=1):
+def train(model, train_dl, valid_dl, loss_fn, optimizer, scheduler, metrics_fn, epochs=1):
     start = time.time()
 
     train_loss, valid_loss = [], []
-
+    acc, mcc, inform = defaultdict(list), defaultdict(list), defaultdict(list)
     for _ in tqdm(range(epochs), total=epochs, unit='epoch'):
+        scheduler.step()
         for phase in ['train', 'valid']:
             if phase == 'train':
                 model.train(True)  # Set training mode = true
@@ -178,8 +181,11 @@ def train(model, train_dl, valid_dl, loss_fn, optimizer, metrics_fn, epochs=1):
             tp, fp, tn, fn = epoch_metrics_arr
             accuracy = (tp + tn) / (tp + fp + tn + fn)
             print(f'\t>Acc: {accuracy:0.2f}')
-            print(f'\t>Inf: {informedness(epoch_metrics_arr):0.2f}')
-            print(f'\t>Mcc: {matthews_correlation_coefficient(epoch_metrics_arr):0.2f}')
+            acc[phase].append(accuracy)
+            inform[phase].append(informedness(epoch_metrics_arr))
+            print(f'\t>Inf: {inform[phase][-1]:0.2f}')
+            mcc[phase].append(matthews_correlation_coefficient(epoch_metrics_arr))
+            print(f'\t>Mcc: {mcc[phase][-1]:0.2f}')
 
             train_loss.append(epoch_loss) if phase == 'train' else valid_loss.append(epoch_loss)
         curr_time = time.time()
@@ -187,7 +193,7 @@ def train(model, train_dl, valid_dl, loss_fn, optimizer, metrics_fn, epochs=1):
         print('Epoch complete in {:.0f}m {:.0f}s'.format(time_elapsed // 60, time_elapsed % 60))
         start = curr_time
 
-    return train_loss, valid_loss
+    return train_loss, valid_loss, acc, inform, mcc
 
 
 def informedness(metrics_arr):
@@ -318,9 +324,30 @@ def plot_train_valid_loss(train_loss: List[float], valid_loss: List[float], plot
     plt.plot(epochs, valid_loss, 'b', label='Valid Loss')
     plt.title('Training & Validation results')
     plt.xlabel('Epochs')
+    plt.xticks([x - 1 for x in epochs[::10]])
     plt.ylabel('Loss (BCE)')
     plt.legend()
+    plt.grid()
     plt.savefig(plot_path, dpi=300)
+    plt.clf()
+
+
+def plot_metrics(accuracy, inform, mcc, plot_path):
+    for phase in ['train', 'valid']:
+        accuracy_p, inform_p, mcc_p = accuracy[phase], inform[phase], mcc[phase]
+        epochs = list(range(1, len(accuracy_p) + 1))
+        plt.plot(epochs, accuracy_p, 'r', label='Accuracy')
+        plt.plot(epochs, inform_p, 'g', label='Informedness')
+        plt.plot(epochs, mcc_p, 'b', label="Matthew's CC")
+        plt.title('Classification Metrics')
+        plt.xlabel('Epochs')
+        plt.xticks([x - 1 for x in epochs[::10]])
+        plt.ylabel('Metrics')
+        plt.ylim((-1, 1))
+        plt.legend()
+        plt.grid()
+        plt.savefig(plot_path.replace('.png', f'_{phase}.png'), dpi=300)
+        plt.clf()
 
 
 def main():
@@ -360,16 +387,16 @@ def main():
             pos_weight = train_dl.positive_class_weight()
             pw = torch.FloatTensor([1 / pos_weight])
             loss_fn = torch.nn.BCEWithLogitsLoss(pos_weight=pw)
-            optimizer = torch.optim.SGD(network.parameters(), lr=0.005, momentum=0.9, nesterov=True)
-            train_loss, validation_loss = train(network, train_dl, valid_dl, loss_fn, optimizer, metrics,
-                                                epochs=NUM_EPOCHS)
-            print(f'Train: {train_loss}')
-            print(f'Valid: {validation_loss}')
+            optimizer = torch.optim.SGD(network.parameters(), lr=0.1, momentum=0.9, nesterov=True)
+            scheduler = StepLR(optimizer, step_size=5, gamma=0.5)
+            train_loss, validation_loss, accuracy, inform, mcc = train(network, train_dl, valid_dl, loss_fn, optimizer,
+                                                                       scheduler, metrics, epochs=NUM_EPOCHS)
             cont_str = '_c' if CONT_TRAIN else ''
             model_name = f'./saved_models/unet_{IMAGE_SIZE}x_{NUM_EPOCHS}e_{get_sortable_timestamp()}{cont_str}'
             model_path = f'{model_name}.pt'
             torch.save(network.state_dict(), model_path)
-            plot_train_valid_loss(train_loss, validation_loss, f'{model_name}.png')
+            plot_train_valid_loss(train_loss, validation_loss, f'{model_name}_loss.png')
+            plot_metrics(accuracy, inform, mcc, f'{model_name}_metrics.png')
             if VALID_EVAL:
                 evaluate_valid_images(model_path)
             exit(0)

@@ -3,6 +3,7 @@ import time
 from typing import Union
 
 import cv2
+import matplotlib.pyplot as plt
 import numpy as np
 import pyfakewebcam
 import torch
@@ -13,7 +14,7 @@ from model import UNET
 from training import IMAGE_SIZE
 from utils import clean_up_mask
 
-WEBCAM_OUTPUT_RESOLUTION = (640, 480)
+WEBCAM_OUTPUT_RESOLUTION = (640, 640)
 BACKGROUND_IMAGE = './images/background_nature.jpeg'
 MODEL_PATH = './saved_models/unet_128x_50e_2021-02-17-18-46.pt'
 DESIRED_FPS = 30
@@ -36,11 +37,9 @@ def remove_background_single_image(src_image: Union[str, Image.Image], model: UN
         background = background.resize(img.size)
     img_tensor = _normalize_image_to_tensor(img).unsqueeze(0)
     res = model(img_tensor)
-    res -= torch.min(res)
-    res /= torch.max(res)
-    mask = torch.gt(res.squeeze(0), 0)
-    mask_img = transforms.ToPILImage()(mask.int() * 255).convert('L').resize(img.size, resample=Image.BICUBIC)
-    mask_img = Image.fromarray(clean_up_mask(mask_img))
+    mask = torch.gt(res.squeeze(0), 0.5)[0]
+    mask = mask.int() * 255
+    mask_img = transforms.ToPILImage()(mask).convert('L').resize(img.size, resample=Image.BICUBIC)
     img.convert('RGBA')
     result = Image.composite(img, background, mask_img)
     background.paste(img)
@@ -60,7 +59,8 @@ def main():
             continue
         # Open CV used BGR instead of RGB, so we correct that with this line (otherwise I look blue)
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        result = remove_background_single_image(Image.fromarray(frame), model, background_image=BACKGROUND_IMAGE)
+        result = remove_background_single_image(Image.fromarray(frame).resize(WEBCAM_OUTPUT_RESOLUTION),
+                                                model, background_image=BACKGROUND_IMAGE)
         out_cam.schedule_frame(np.asarray(result))
         time.sleep(1 / DESIRED_FPS)
     del cam
