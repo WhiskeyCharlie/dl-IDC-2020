@@ -7,6 +7,7 @@ import torch
 import torchvision
 from model import UNET
 import torch.utils.data as data
+import torch.nn.functional as F
 import glob
 import os
 import sys
@@ -16,9 +17,9 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1 import ImageGrid
 from tqdm import tqdm
 
-BATCH_SIZE = 1
+BATCH_SIZE = 10
 IMAGE_SIZE = 128
-NUM_EPOCHS = 100
+NUM_EPOCHS = 50
 VALID_EVAL = True
 RESIZE_ALL = False
 TRAIN_MODE = True
@@ -149,7 +150,8 @@ def train(model, train_dl, valid_dl, loss_fn, optimizer, metrics_fn, epochs=1):
                     # zero the gradients
                     optimizer.zero_grad()
                     outputs = model(x)
-                    loss = loss_fn(outputs, y.float())
+
+                    loss = loss_fn(outputs, y)
 
                     # the backward pass frees the graph memory, so there is no
                     # need for torch.no_grad in this training pass
@@ -159,7 +161,7 @@ def train(model, train_dl, valid_dl, loss_fn, optimizer, metrics_fn, epochs=1):
                 else:
                     with torch.no_grad():
                         outputs = model(x)
-                        loss = loss_fn(outputs, y.float())
+                        loss = loss_fn(outputs, y)
 
                 batch_metrics = metrics_fn(outputs, y)
 
@@ -358,7 +360,7 @@ def main():
             pos_weight = train_dl.positive_class_weight()
             pw = torch.FloatTensor([1 / pos_weight])
             loss_fn = torch.nn.BCEWithLogitsLoss(pos_weight=pw)
-            optimizer = torch.optim.RMSprop(network.parameters(), lr=0.001)
+            optimizer = torch.optim.SGD(network.parameters(), lr=0.005, momentum=0.9, nesterov=True)
             train_loss, validation_loss = train(network, train_dl, valid_dl, loss_fn, optimizer, metrics,
                                                 epochs=NUM_EPOCHS)
             print(f'Train: {train_loss}')

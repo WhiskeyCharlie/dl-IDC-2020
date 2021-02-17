@@ -15,13 +15,13 @@ from utils import clean_up_mask
 
 WEBCAM_OUTPUT_RESOLUTION = (640, 480)
 BACKGROUND_IMAGE = './images/background_nature.jpeg'
-MODEL_PATH = './saved_models/unet_128x_100e_2021-02-17-17-01.pt'
+MODEL_PATH = './saved_models/unet_128x_50e_2021-02-17-18-46.pt'
 DESIRED_FPS = 30
 
 
 def _normalize_image_to_tensor(img: Image):
     resized_img = img.resize((IMAGE_SIZE, IMAGE_SIZE))
-    return transforms.PILToTensor()(resized_img).float() / 255
+    return transforms.PILToTensor()(resized_img).float() / 255.0
 
 
 def remove_background_single_image(src_image: Union[str, Image.Image], model: UNET, background_image=None) -> Image:
@@ -35,8 +35,12 @@ def remove_background_single_image(src_image: Union[str, Image.Image], model: UN
         background = Image.open(background_image)
         background = background.resize(img.size)
     img_tensor = _normalize_image_to_tensor(img).unsqueeze(0)
-    mask = torch.gt(model(img_tensor).squeeze(0), 0.25)
+    res = model(img_tensor)
+    res -= torch.min(res)
+    res /= torch.max(res)
+    mask = torch.gt(res.squeeze(0), 0)
     mask_img = transforms.ToPILImage()(mask.int() * 255).convert('L').resize(img.size, resample=Image.BICUBIC)
+    mask_img = Image.fromarray(clean_up_mask(mask_img))
     img.convert('RGBA')
     result = Image.composite(img, background, mask_img)
     background.paste(img)
