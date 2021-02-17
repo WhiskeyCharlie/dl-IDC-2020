@@ -12,3 +12,4 @@ annotations_trainval2017
 images/
 saved_models/
 unet.pt
+gh_dataset/

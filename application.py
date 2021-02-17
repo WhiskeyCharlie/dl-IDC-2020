@@ -11,10 +11,11 @@ from torchvision import transforms
 
 from model import UNET
 from training import IMAGE_SIZE
+from utils import clean_up_mask
 
 WEBCAM_OUTPUT_RESOLUTION = (640, 480)
 BACKGROUND_IMAGE = './images/background_nature.jpeg'
-MODEL_PATH = './saved_models/unet_64x_5e_2021-02-16-22-15_c.pt'
+MODEL_PATH = './saved_models/unet_128x_100e_2021-02-17-17-01.pt'
 DESIRED_FPS = 30
 
 
@@ -34,7 +35,7 @@ def remove_background_single_image(src_image: Union[str, Image.Image], model: UN
         background = Image.open(background_image)
         background = background.resize(img.size)
     img_tensor = _normalize_image_to_tensor(img).unsqueeze(0)
-    mask = torch.gt(model(img_tensor).squeeze(0), 0.5)
+    mask = torch.gt(model(img_tensor).squeeze(0), 0.25)
     mask_img = transforms.ToPILImage()(mask.int() * 255).convert('L').resize(img.size, resample=Image.BICUBIC)
     img.convert('RGBA')
     result = Image.composite(img, background, mask_img)

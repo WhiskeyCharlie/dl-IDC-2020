@@ -1,5 +1,6 @@
 import datetime
 import time
+from typing import List
 
 import numpy as np
 import torch
@@ -15,15 +16,18 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1 import ImageGrid
 from tqdm import tqdm
 
-BATCH_SIZE = 32
-IMAGE_SIZE = 64
-NUM_EPOCHS = 5
+BATCH_SIZE = 1
+IMAGE_SIZE = 128
+NUM_EPOCHS = 100
 VALID_EVAL = True
 RESIZE_ALL = False
 TRAIN_MODE = True
-CONT_TRAIN = True
+CONT_TRAIN = False
+OI_DATASET = False
+GH_DATASET = True
 CONT_MODEL = './saved_models/unet_64x_100e.pt'
-EVAL_MODEL = './saved_models/unet_128x_5e_2021-02-16-17-45.pt'
+EVAL_MODEL = './saved_models/unet_64x_20e_2021-02-17-11-47.pt'
+FIRST_CHAR = '0'
 
 
 class DataLoaderSegmentation(data.DataLoader):
@@ -34,9 +38,49 @@ class DataLoaderSegmentation(data.DataLoader):
         return self.dataset.get_positive_weights()
 
 
-class DatasetSegmentation(data.Dataset):
+class DatasetSegmentationGH(data.Dataset):
     def __init__(self, main_folder_path, segments_folder_path):
-        super(DatasetSegmentation, self).__init__()
+        super(DatasetSegmentationGH, self).__init__()
+
+        mask_files = glob.glob(os.path.join(segments_folder_path, '*'))
+
+        self._main_folder_path = main_folder_path
+        self.total_positive_pixels = 0
+        self.total_pixels = 0
+        self.images = dict()
+
+        for index, mask_path in enumerate(mask_files):
+            self._read_single_image_pair(mask_path, index)
+
+    def _read_single_image_pair(self, mask_path, index):
+        base_name = os.path.basename(mask_path)
+        image_path = os.path.join(self._main_folder_path, base_name.replace('.png', '.jpg'))
+        image_pil = Image.open(image_path).convert('RGB')
+        mask_pil = Image.open(mask_path).convert('1')
+        image_1 = torchvision.transforms.PILToTensor()(image_pil)
+        image_2 = torchvision.transforms.PILToTensor()(mask_pil)
+        self.total_positive_pixels += torch.count_nonzero(image_2)
+        self.total_pixels += torch.numel(image_1)
+        self.images[index] = (image_1.float() / 255.0, image_2.float() / 255.0)
+
+    def positive_class_weight(self):
+        return self.dataset.get_positive_weights()
+
+    def get_positive_weights(self):
+        if self.total_pixels == 0:
+            return 0
+        return self.total_positive_pixels / self.total_pixels
+
+    def __getitem__(self, index):
+        return self.images.get(index)
+
+    def __len__(self):
+        return len(self.images)
+
+
+class DatasetSegmentationOI(data.Dataset):
+    def __init__(self, main_folder_path, segments_folder_path):
+        super(DatasetSegmentationOI, self).__init__()
         self.mask_files = glob.glob(os.path.join(segments_folder_path, '*.png'))
         self.img_files = []
         self.cache = dict()
@@ -45,7 +89,7 @@ class DatasetSegmentation(data.Dataset):
             base_file_name = os.path.basename(mask_path)
             img_path = os.path.join(main_folder_path, os.path.basename(mask_path).split('_')[0] + '.jpg')
             # Second clause is so we only take some of the pics
-            if os.path.exists(img_path) and base_file_name[0] in '0123':
+            if os.path.exists(img_path) and base_file_name[0] in FIRST_CHAR:
                 self.img_files.append(img_path)
                 self.mask_files_with_corresponding_img.append(mask_path)
         self.mask_files = None
@@ -126,8 +170,8 @@ def train(model, train_dl, valid_dl, loss_fn, optimizer, metrics_fn, epochs=1):
             epoch_metrics = running_acc / len(dataloader.dataset)
 
             print(f'{phase} Loss: {epoch_loss:.4f}')
-            for label, metric in zip(['TPR', 'FPR', 'TNR', 'FNR'], epoch_metrics):
-                print(f'\t>{label}: {metric.detach().item():0.2f}')
+            for label, metric in zip(['TPR', 'FPR', 'TNR', 'FNR'], metrics_to_rates(epoch_metrics)):
+                print(f'\t>{label}: {metric:0.2f}')
             epoch_metrics_arr = np.asarray(epoch_metrics)
             tp, fp, tn, fn = epoch_metrics_arr
             accuracy = (tp + tn) / (tp + fp + tn + fn)
@@ -158,6 +202,16 @@ def matthews_correlation_coefficient(metrics_arr):
     return numerator / denominator
 
 
+def metrics_to_rates(metrics_tensor: torch.Tensor) -> List[float]:
+    arr = np.asarray(metrics_tensor)
+    tp, fp, tn, fn = arr
+    tpr = tp / (tp + fn)
+    tnr = tn / (tn + fp)
+    fpr = 1 - tnr
+    fnr = 1 - tpr
+    return [tpr, fpr, tnr, fnr]
+
+
 def metrics(pred_b, y_b) -> torch.Tensor:
     predicted_res = pred_b.clone().detach()
     predicted_res = torch.gt(predicted_res, 0.5).detach()
@@ -166,26 +220,26 @@ def metrics(pred_b, y_b) -> torch.Tensor:
     int_y_b = y_b.int()
 
     true_positive_tensor = int_pred_b & int_y_b
-    true_positive_rate = torch.mean(true_positive_tensor.float()).detach().item()
+    true_positive = torch.mean(true_positive_tensor.float()).detach().item()
 
     false_positive_tensor = int_pred_b & (1 - int_y_b)
-    false_positive_rate = torch.mean(false_positive_tensor.float()).detach().item()
+    false_positive = torch.mean(false_positive_tensor.float()).detach().item()
 
     true_negative_tensor = (1 - int_pred_b) & (1 - int_y_b)
-    true_negative_rate = torch.mean(true_negative_tensor.float()).detach().item()
+    true_negative = torch.mean(true_negative_tensor.float()).detach().item()
 
     false_negative_tensor = (1 - int_pred_b) & int_y_b
-    false_negative_rate = torch.mean(false_negative_tensor.float()).detach().mean()
+    false_negative = torch.mean(false_negative_tensor.float()).detach().mean()
 
-    return torch.tensor([true_positive_rate, false_positive_rate, true_negative_rate, false_negative_rate])
+    return torch.tensor([true_positive, false_positive, true_negative, false_negative])
 
 
-def load_images():
+def load_oi_images():
     batch_size = BATCH_SIZE
-    train_dataset = DatasetSegmentation(f'oid/train_{IMAGE_SIZE}/',
-                                        f'oid/train_segments_people_{IMAGE_SIZE}')
-    validation_dataset = DatasetSegmentation(f'oid/validation_{IMAGE_SIZE}/',
-                                             f'oid/validation_segments_people_{IMAGE_SIZE}')
+    train_dataset = DatasetSegmentationOI(f'oid/train_{IMAGE_SIZE}/',
+                                          f'oid/train_segments_people_{IMAGE_SIZE}')
+    validation_dataset = DatasetSegmentationOI(f'oid/validation_{IMAGE_SIZE}/',
+                                               f'oid/validation_segments_people_{IMAGE_SIZE}')
     train_loader = DataLoaderSegmentation(train_dataset, batch_size=batch_size, num_workers=0, shuffle=True)
     test_loader = DataLoaderSegmentation(validation_dataset, batch_size=batch_size, num_workers=0)
     # Ugly hack to initialize the positive class counts.
@@ -194,13 +248,32 @@ def load_images():
     return train_loader, test_loader
 
 
+def load_gh_images():
+    batch_size = 5
+    full_dataset = DatasetSegmentationGH(f'./gh_dataset/train_{IMAGE_SIZE}', f'./gh_dataset/segments_{IMAGE_SIZE}')
+    num_train_instances = int(len(full_dataset) * 0.8)
+    num_valid_instances = len(full_dataset) - num_train_instances
+    train_dataset, validation_dataset = torch.utils.data.random_split(full_dataset,
+                                                                      [num_train_instances, num_valid_instances])
+
+    # Horrible hack, truly
+    def pos_instances():
+        return full_dataset.get_positive_weights()
+    setattr(train_dataset, 'get_positive_weights', pos_instances)
+    setattr(validation_dataset, 'get_positive_weights', pos_instances)
+
+    train_loader = DataLoaderSegmentation(train_dataset, batch_size=batch_size, num_workers=0, shuffle=True)
+    test_loader = DataLoaderSegmentation(validation_dataset, batch_size=batch_size, num_workers=0, shuffle=False)
+    return train_loader, test_loader
+
+
 def evaluate_valid_images(model_path='./unet.pt', evaluate_some_test=False):
     network = UNET(3, 1)
     network.load_state_dict(torch.load(model_path))
     network.eval()
-    train_dl, valid_dl = load_images()
+    train_dl, valid_dl = load_oi_images() if OI_DATASET else load_gh_images()
     for valid_img_batch, valid_mask_batch in valid_dl:
-        predicted_batch = network(valid_img_batch).gt(0.01)
+        predicted_batch = network(valid_img_batch).gt(0.5)
         for valid_img, valid_mask, predicted_mask in zip(valid_img_batch, valid_mask_batch, predicted_batch):
             grid = ImageGrid(plt.figure(figsize=(4, 4)), 111, nrows_ncols=(2, 2), axes_pad=0.1)
             for ax, im in zip(grid, [valid_img.detach().permute(1, 2, 0),
@@ -213,7 +286,7 @@ def evaluate_valid_images(model_path='./unet.pt', evaluate_some_test=False):
         for valid_img_batch, valid_mask_batch in train_dl:
             if ctr > 100:
                 break
-            predicted_batch = network(valid_img_batch).gt(0.01)
+            predicted_batch = network(valid_img_batch).gt(0.5)
             for valid_img, valid_mask, predicted_mask in zip(valid_img_batch, valid_mask_batch, predicted_batch):
                 grid = ImageGrid(plt.figure(figsize=(4, 4)), 111, nrows_ncols=(2, 2), axes_pad=0.1)
                 for ax, im in zip(grid, [valid_img.detach().permute(1, 2, 0),
@@ -237,24 +310,42 @@ def get_sortable_timestamp():
     return datetime.datetime.today().strftime('%Y-%m-%d-%H-%M')
 
 
+def plot_train_valid_loss(train_loss: List[float], valid_loss: List[float], plot_path):
+    epochs = list(range(1, len(train_loss) + 1))
+    plt.plot(epochs, train_loss, 'g', label='Train Loss')
+    plt.plot(epochs, valid_loss, 'b', label='Valid Loss')
+    plt.title('Training & Validation results')
+    plt.xlabel('Epochs')
+    plt.ylabel('Loss (BCE)')
+    plt.legend()
+    plt.savefig(plot_path, dpi=300)
+
+
 def main():
-    torch.set_num_threads(24)
+    torch.set_num_threads(20)
     print('Available Threads:', torch.get_num_threads())
     if RESIZE_ALL:
-        resize_images('./oid/train/', f'./oid/train_{IMAGE_SIZE}')
-        print('Resized Training')
-        resize_images('./oid/validation', f'./oid/validation_{IMAGE_SIZE}')
-        print('Resized Validation')
-        resize_images('./oid/train_segments_people', f'./oid/train_segments_people_{IMAGE_SIZE}')
-        print('Resized Training Segments')
-        resize_images('./oid/validation_segments_people', f'./oid/validation_segments_people_{IMAGE_SIZE}')
-        print('Resized Validation Segments')
-        print('Done')
-        exit(0)
+        if OI_DATASET:
+            resize_images('./oid/train/', f'./oid/train_{IMAGE_SIZE}')
+            print('Resized Training')
+            resize_images('./oid/validation', f'./oid/validation_{IMAGE_SIZE}')
+            print('Resized Validation')
+            resize_images('./oid/train_segments_people', f'./oid/train_segments_people_{IMAGE_SIZE}')
+            print('Resized Training Segments')
+            resize_images('./oid/validation_segments_people', f'./oid/validation_segments_people_{IMAGE_SIZE}')
+            print('Resized Validation Segments')
+            print('Done')
+            exit(0)
+        elif GH_DATASET:
+            resize_images('./gh_dataset/train/', f'./gh_dataset/train_{IMAGE_SIZE}')
+            resize_images('./gh_dataset/segments/', f'./gh_dataset/segments_{IMAGE_SIZE}')
     if TRAIN_MODE:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            train_dl, valid_dl = load_images()
+            if OI_DATASET:
+                train_dl, valid_dl = load_oi_images()
+            else:
+                train_dl, valid_dl = load_gh_images()
             network = UNET(3, 1)
             if CONT_TRAIN:
                 # noinspection PyBroadException
@@ -267,20 +358,22 @@ def main():
             pos_weight = train_dl.positive_class_weight()
             pw = torch.FloatTensor([1 / pos_weight])
             loss_fn = torch.nn.BCEWithLogitsLoss(pos_weight=pw)
-            optimizer = torch.optim.Adam(network.parameters(), lr=0.01)
+            optimizer = torch.optim.RMSprop(network.parameters(), lr=0.001)
             train_loss, validation_loss = train(network, train_dl, valid_dl, loss_fn, optimizer, metrics,
                                                 epochs=NUM_EPOCHS)
             print(f'Train: {train_loss}')
             print(f'Valid: {validation_loss}')
             cont_str = '_c' if CONT_TRAIN else ''
-            model_path = f'./saved_models/unet_{IMAGE_SIZE}x_{NUM_EPOCHS}e_{get_sortable_timestamp()}{cont_str}.pt'
+            model_name = f'./saved_models/unet_{IMAGE_SIZE}x_{NUM_EPOCHS}e_{get_sortable_timestamp()}{cont_str}'
+            model_path = f'{model_name}.pt'
             torch.save(network.state_dict(), model_path)
+            plot_train_valid_loss(train_loss, validation_loss, f'{model_name}.png')
             if VALID_EVAL:
                 evaluate_valid_images(model_path)
             exit(0)
 
     if VALID_EVAL:
-        evaluate_valid_images(MODEL_TO_EVAL)
+        evaluate_valid_images(EVAL_MODEL)
 
 
 if __name__ == '__main__':
