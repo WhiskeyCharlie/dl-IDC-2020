@@ -1,23 +1,22 @@
 import datetime
-import time
-from collections import defaultdict
-from typing import List
-
-import numpy as np
-import torch
-import torchvision
-from model import UNET
-import torch.utils.data as data
-import torch.nn.functional as F
-from torch.optim.lr_scheduler import StepLR
 import glob
 import os
 import sys
-from PIL import Image
+import time
 import warnings
+from collections import defaultdict
+from typing import List
+
 import matplotlib.pyplot as plt
+import numpy as np
+import torch
+from PIL import Image
 from mpl_toolkits.axes_grid1 import ImageGrid
+from torch.optim.lr_scheduler import StepLR
 from tqdm import tqdm
+
+from datasetsAndDataloaders import DatasetSegmentationGH, DatasetSegmentationOI, DataLoaderSegmentation
+from model import UNET
 
 BATCH_SIZE = 10
 IMAGE_SIZE = 128
@@ -28,103 +27,9 @@ TRAIN_MODE = True
 CONT_TRAIN = False
 OI_DATASET = False
 GH_DATASET = True
-CONT_MODEL = './saved_models/unet_64x_100e.pt'
-EVAL_MODEL = './saved_models/unet_64x_20e_2021-02-17-11-47.pt'
+CONT_MODEL = ''
+EVAL_MODEL = ''
 FIRST_CHAR = '0'
-
-
-class DataLoaderSegmentation(data.DataLoader):
-    def __init__(self, *args, **kwargs):
-        super(DataLoaderSegmentation, self).__init__(*args, **kwargs)
-
-    def positive_class_weight(self):
-        return self.dataset.get_positive_weights()
-
-
-class DatasetSegmentationGH(data.Dataset):
-    def __init__(self, main_folder_path, segments_folder_path):
-        super(DatasetSegmentationGH, self).__init__()
-
-        mask_files = glob.glob(os.path.join(segments_folder_path, '*'))
-
-        self._main_folder_path = main_folder_path
-        self.total_positive_pixels = 0
-        self.total_pixels = 0
-        self.images = dict()
-
-        for index, mask_path in enumerate(mask_files):
-            self._read_single_image_pair(mask_path, index)
-
-    def _read_single_image_pair(self, mask_path, index):
-        base_name = os.path.basename(mask_path)
-        image_path = os.path.join(self._main_folder_path, base_name.replace('.png', '.jpg'))
-        image_pil = Image.open(image_path).convert('RGB')
-        mask_pil = Image.open(mask_path).convert('1')
-        image_1 = torchvision.transforms.PILToTensor()(image_pil)
-        image_2 = torchvision.transforms.PILToTensor()(mask_pil)
-        self.total_positive_pixels += torch.count_nonzero(image_2)
-        self.total_pixels += torch.numel(image_1)
-        self.images[index] = (image_1.float() / 255.0, image_2.float() / 255.0)
-
-    def positive_class_weight(self):
-        return self.dataset.get_positive_weights()
-
-    def get_positive_weights(self):
-        if self.total_pixels == 0:
-            return 0
-        return (self.total_pixels - self.total_positive_pixels) / self.total_positive_pixels
-
-    def __getitem__(self, index):
-        return self.images.get(index)
-
-    def __len__(self):
-        return len(self.images)
-
-
-class DatasetSegmentationOI(data.Dataset):
-    def __init__(self, main_folder_path, segments_folder_path):
-        super(DatasetSegmentationOI, self).__init__()
-        self.mask_files = glob.glob(os.path.join(segments_folder_path, '*.png'))
-        self.img_files = []
-        self.cache = dict()
-        self.mask_files_with_corresponding_img = []
-        for mask_path in self.mask_files:
-            base_file_name = os.path.basename(mask_path)
-            img_path = os.path.join(main_folder_path, os.path.basename(mask_path).split('_')[0] + '.jpg')
-            # Second clause is so we only take some of the pics
-            if os.path.exists(img_path) and base_file_name[0] in FIRST_CHAR:
-                self.img_files.append(img_path)
-                self.mask_files_with_corresponding_img.append(mask_path)
-        self.mask_files = None
-        self.total_positive_pixels = 0
-        self.total_pixels = 0
-
-    def get_positive_weights(self):
-        if self.total_pixels == 0:
-            return 0
-        return self.total_positive_pixels / self.total_pixels
-
-    def __getitem__(self, index):
-        if index not in self.cache:
-            img_path = self.img_files[index]
-            mask_path = self.mask_files_with_corresponding_img[index]
-            x_img = Image.open(img_path).convert("RGB")
-            label = Image.open(mask_path).convert("1")
-            background = Image.new('1', label.size, 0)
-            background.paste(label)
-            image_1 = torchvision.transforms.PILToTensor()(x_img)
-            image_2 = torchvision.transforms.PILToTensor()(background)
-            x_img.close()
-            label.close()
-            background.close()
-            inp, out = image_1.float() / 255.0, image_2.float() / 255.0
-            self.cache[index] = inp, out
-            self.total_pixels += torch.numel(out)
-            self.total_positive_pixels += torch.count_nonzero(out).item()
-        return self.cache[index]
-
-    def __len__(self):
-        return len(self.img_files)
 
 
 def train(model, train_dl, valid_dl, loss_fn, optimizer, scheduler, metrics_fn, epochs=1):
@@ -245,9 +150,9 @@ def metrics(pred_b, y_b) -> torch.Tensor:
 def load_oi_images():
     batch_size = BATCH_SIZE
     train_dataset = DatasetSegmentationOI(f'oid/train_{IMAGE_SIZE}/',
-                                          f'oid/train_segments_people_{IMAGE_SIZE}')
+                                          f'oid/train_segments_people_{IMAGE_SIZE}', FIRST_CHAR)
     validation_dataset = DatasetSegmentationOI(f'oid/validation_{IMAGE_SIZE}/',
-                                               f'oid/validation_segments_people_{IMAGE_SIZE}')
+                                               f'oid/validation_segments_people_{IMAGE_SIZE}', FIRST_CHAR)
     train_loader = DataLoaderSegmentation(train_dataset, batch_size=batch_size, num_workers=0, shuffle=True)
     test_loader = DataLoaderSegmentation(validation_dataset, batch_size=batch_size, num_workers=0)
     # Ugly hack to initialize the positive class counts.
@@ -384,8 +289,7 @@ def main():
                 except:
                     print('Training Continuation failed', file=sys.stderr)
                     exit(1)
-            pos_weight = train_dl.positive_class_weight()
-            print(pos_weight)
+            # pos_weight = train_dl.positive_class_weight()
             pw = torch.FloatTensor([5])
             loss_fn = torch.nn.BCEWithLogitsLoss(pos_weight=pw)
             optimizer = torch.optim.SGD(network.parameters(), lr=0.1, momentum=0.9, nesterov=True, weight_decay=0.01)

@@ -1,7 +1,5 @@
-from torch import nn
 import torch
-import torchvision
-import torch.nn.functional as F
+from torch import nn
 
 
 class UNET(nn.Module):
@@ -19,7 +17,6 @@ class UNET(nn.Module):
         self.up_conv1 = self.expand_block(32 * 2, out_channels, 3, 1)
 
     def __call__(self, x):
-        # down-sampling part
         conv1 = self.conv1(x)
         conv2 = self.conv2(conv1)
         conv3 = self.conv3(conv2)
@@ -36,10 +33,10 @@ class UNET(nn.Module):
     @staticmethod
     def contract_block(in_channels, out_channels, kernel_size, padding):
         contract = nn.Sequential(
-            torch.nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=1, padding=padding),
+            torch.nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, padding=padding),
             torch.nn.BatchNorm2d(out_channels),
             torch.nn.ReLU(),
-            torch.nn.Conv2d(out_channels, out_channels, kernel_size=kernel_size, stride=1, padding=padding),
+            torch.nn.Conv2d(out_channels, out_channels, kernel_size=kernel_size, padding=padding),
             torch.nn.BatchNorm2d(out_channels),
             torch.nn.ReLU(),
             torch.nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
@@ -49,10 +46,10 @@ class UNET(nn.Module):
 
     @staticmethod
     def expand_block(in_channels, out_channels, kernel_size, padding):
-        expand = nn.Sequential(torch.nn.Conv2d(in_channels, out_channels, kernel_size, stride=1, padding=padding),
+        expand = nn.Sequential(torch.nn.Conv2d(in_channels, out_channels, kernel_size, padding=padding),
                                torch.nn.BatchNorm2d(out_channels),
                                torch.nn.ReLU(),
-                               torch.nn.Conv2d(out_channels, out_channels, kernel_size, stride=1, padding=padding),
+                               torch.nn.Conv2d(out_channels, out_channels, kernel_size, padding=padding),
                                torch.nn.BatchNorm2d(out_channels),
                                torch.nn.ReLU(),
                                torch.nn.ConvTranspose2d(out_channels, out_channels, kernel_size=3, stride=2, padding=1,

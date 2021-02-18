@@ -4,7 +4,6 @@ import warnings
 from typing import Union
 
 import cv2
-import matplotlib.pyplot as plt
 import numpy as np
 import pyfakewebcam
 import torch
@@ -13,10 +12,10 @@ from torchvision import transforms
 
 from model import UNET
 from training import IMAGE_SIZE
-from utils import clean_up_mask, normalize_image_to_tensor
+from utils import normalize_image_to_tensor
 
 WEBCAM_OUTPUT_RESOLUTION = (640, 640)
-BACKGROUND_IMAGE = './images/190802_Curbed_Pires_2-png.webp'
+BACKGROUND_IMAGE = './images/background_apartment.webp'
 FAKE_WEBCAM_PATH = '/dev/video2'
 DESIRED_FPS = 30
 MODEL_PATH = './saved_models/unet_128x_50e_2021-02-18-00-16.pt'
