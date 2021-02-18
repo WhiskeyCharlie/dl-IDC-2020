@@ -15,8 +15,8 @@ from training import IMAGE_SIZE
 from utils import clean_up_mask
 
 WEBCAM_OUTPUT_RESOLUTION = (640, 640)
-BACKGROUND_IMAGE = './images/background_nature.jpeg'
-MODEL_PATH = './saved_models/unet_128x_50e_2021-02-17-18-46.pt'
+BACKGROUND_IMAGE = './images/190802_Curbed_Pires_2-png.webp'
+MODEL_PATH = './saved_models/unet_128x_50e_2021-02-18-00-16.pt'
 DESIRED_FPS = 30
 
 

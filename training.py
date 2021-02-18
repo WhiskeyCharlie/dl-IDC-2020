@@ -72,7 +72,7 @@ class DatasetSegmentationGH(data.Dataset):
     def get_positive_weights(self):
         if self.total_pixels == 0:
             return 0
-        return self.total_positive_pixels / self.total_pixels
+        return (self.total_pixels - self.total_positive_pixels) / self.total_positive_pixels
 
     def __getitem__(self, index):
         return self.images.get(index)
@@ -339,7 +339,7 @@ def plot_metrics(accuracy, inform, mcc, plot_path):
         plt.plot(epochs, accuracy_p, 'r', label='Accuracy')
         plt.plot(epochs, inform_p, 'g', label='Informedness')
         plt.plot(epochs, mcc_p, 'b', label="Matthew's CC")
-        plt.title('Classification Metrics')
+        plt.title(f'Classification Metrics ({phase})')
         plt.xlabel('Epochs')
         plt.xticks([x - 1 for x in epochs[::10]])
         plt.ylabel('Metrics')
@@ -385,10 +385,11 @@ def main():
                     print('Training Continuation failed', file=sys.stderr)
                     exit(1)
             pos_weight = train_dl.positive_class_weight()
-            pw = torch.FloatTensor([1 / pos_weight])
+            print(pos_weight)
+            pw = torch.FloatTensor([5])
             loss_fn = torch.nn.BCEWithLogitsLoss(pos_weight=pw)
-            optimizer = torch.optim.SGD(network.parameters(), lr=0.1, momentum=0.9, nesterov=True)
-            scheduler = StepLR(optimizer, step_size=5, gamma=0.5)
+            optimizer = torch.optim.SGD(network.parameters(), lr=0.1, momentum=0.9, nesterov=True, weight_decay=0.01)
+            scheduler = StepLR(optimizer, step_size=3, gamma=0.5)
             train_loss, validation_loss, accuracy, inform, mcc = train(network, train_dl, valid_dl, loss_fn, optimizer,
                                                                        scheduler, metrics, epochs=NUM_EPOCHS)
             cont_str = '_c' if CONT_TRAIN else ''
