@@ -1,3 +1,7 @@
+import glob
+import os
+from typing import Tuple
+
 import cv2 as cv
 import numpy as np
 import torchvision.transforms as transforms
@@ -40,3 +44,13 @@ def _cv_image_to_pil(image) -> Image:
 def normalize_image_to_tensor(img: Image, output_size):
     resized_img = img.resize((output_size, output_size))
     return transforms.PILToTensor()(resized_img).float() / 255.0
+
+
+def resize_images(src_directory: str, target_directory: str, dimensions: Tuple[int, int]):
+    src_files = glob.glob(os.path.join(src_directory, '*'))
+    for src_img_path in src_files:
+        base_src_file_name = os.path.basename(src_img_path)
+        target_img_path = os.path.join(target_directory, base_src_file_name)
+        src_img_contents = Image.open(src_img_path).convert('RGB')
+        src_img_contents = src_img_contents.resize(dimensions)
+        src_img_contents.save(target_img_path)

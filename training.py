@@ -1,22 +1,21 @@
 import datetime
-import glob
-import os
 import sys
 import time
 import warnings
 from collections import defaultdict
-from typing import List
 
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-from PIL import Image
 from mpl_toolkits.axes_grid1 import ImageGrid
 from torch.optim.lr_scheduler import StepLR
 from tqdm import tqdm
 
 from datasetsAndDataloaders import DatasetSegmentationGH, DatasetSegmentationOI, DataLoaderSegmentation
+from metricsAndPlotting import plot_train_valid_loss, plot_metrics, informedness, matthews_correlation_coefficient, \
+    metrics_to_rates, metrics
 from model import UNET
+from utils import resize_images
 
 BATCH_SIZE = 10
 IMAGE_SIZE = 128
@@ -101,52 +100,6 @@ def train(model, train_dl, valid_dl, loss_fn, optimizer, scheduler, metrics_fn, 
     return train_loss, valid_loss, acc, inform, mcc
 
 
-def informedness(metrics_arr):
-    tp, fp, tn, fn = metrics_arr
-    return (tp / (tp + fn)) + (tn / (tn + fp)) - 1
-
-
-def matthews_correlation_coefficient(metrics_arr):
-    tp, fp, tn, fn = metrics_arr
-    numerator = (tp * tn) - (fp * fn)
-    denominator = np.sqrt((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn))
-    if denominator == 0:
-        return 0
-    return numerator / denominator
-
-
-def metrics_to_rates(metrics_tensor: torch.Tensor) -> List[float]:
-    arr = np.asarray(metrics_tensor)
-    tp, fp, tn, fn = arr
-    tpr = tp / (tp + fn)
-    tnr = tn / (tn + fp)
-    fpr = 1 - tnr
-    fnr = 1 - tpr
-    return [tpr, fpr, tnr, fnr]
-
-
-def metrics(pred_b, y_b) -> torch.Tensor:
-    predicted_res = pred_b.clone().detach()
-    predicted_res = torch.gt(predicted_res, 0.5).detach()
-    bool_pred_b = torch.gt(predicted_res, 0.5)
-    int_pred_b = bool_pred_b.int()
-    int_y_b = y_b.int()
-
-    true_positive_tensor = int_pred_b & int_y_b
-    true_positive = torch.mean(true_positive_tensor.float()).detach().item()
-
-    false_positive_tensor = int_pred_b & (1 - int_y_b)
-    false_positive = torch.mean(false_positive_tensor.float()).detach().item()
-
-    true_negative_tensor = (1 - int_pred_b) & (1 - int_y_b)
-    true_negative = torch.mean(true_negative_tensor.float()).detach().item()
-
-    false_negative_tensor = (1 - int_pred_b) & int_y_b
-    false_negative = torch.mean(false_negative_tensor.float()).detach().mean()
-
-    return torch.tensor([true_positive, false_positive, true_negative, false_negative])
-
-
 def load_oi_images():
     batch_size = BATCH_SIZE
     train_dataset = DatasetSegmentationOI(f'oid/train_{IMAGE_SIZE}/',
@@ -209,70 +162,35 @@ def evaluate_valid_images(model_path='./unet.pt', evaluate_some_test=False):
                 plt.show()
 
 
-def resize_images(src_directory: str, target_directory: str, dimensions=(IMAGE_SIZE, IMAGE_SIZE)):
-    src_files = glob.glob(os.path.join(src_directory, '*'))
-    for src_img_path in src_files:
-        base_src_file_name = os.path.basename(src_img_path)
-        target_img_path = os.path.join(target_directory, base_src_file_name)
-        src_img_contents = Image.open(src_img_path).convert('RGB')
-        src_img_contents = src_img_contents.resize(dimensions)
-        src_img_contents.save(target_img_path)
-
-
 def get_sortable_timestamp():
     return datetime.datetime.today().strftime('%Y-%m-%d-%H-%M')
-
-
-def plot_train_valid_loss(train_loss: List[float], valid_loss: List[float], plot_path):
-    epochs = list(range(1, len(train_loss) + 1))
-    plt.plot(epochs, train_loss, 'g', label='Train Loss')
-    plt.plot(epochs, valid_loss, 'b', label='Valid Loss')
-    plt.title('Training & Validation results')
-    plt.xlabel('Epochs')
-    plt.xticks([x - 1 for x in epochs[::10]])
-    plt.ylabel('Loss (BCE)')
-    plt.legend()
-    plt.grid()
-    plt.savefig(plot_path, dpi=300)
-    plt.clf()
-
-
-def plot_metrics(accuracy, inform, mcc, plot_path):
-    for phase in ['train', 'valid']:
-        accuracy_p, inform_p, mcc_p = accuracy[phase], inform[phase], mcc[phase]
-        epochs = list(range(1, len(accuracy_p) + 1))
-        plt.plot(epochs, accuracy_p, 'r', label='Accuracy')
-        plt.plot(epochs, inform_p, 'g', label='Informedness')
-        plt.plot(epochs, mcc_p, 'b', label="Matthew's CC")
-        plt.title(f'Classification Metrics ({phase})')
-        plt.xlabel('Epochs')
-        plt.xticks([x - 1 for x in epochs[::10]])
-        plt.ylabel('Metrics')
-        plt.ylim((-1, 1))
-        plt.legend()
-        plt.grid()
-        plt.savefig(plot_path.replace('.png', f'_{phase}.png'), dpi=300)
-        plt.clf()
 
 
 def main():
     torch.set_num_threads(20)
     print('Available Threads:', torch.get_num_threads())
     if RESIZE_ALL:
+        dimensions = (IMAGE_SIZE, IMAGE_SIZE)
         if OI_DATASET:
-            resize_images('./oid/train/', f'./oid/train_{IMAGE_SIZE}')
+            resize_images('./oid/train/',
+                          f'./oid/train_{IMAGE_SIZE}', dimensions)
             print('Resized Training')
-            resize_images('./oid/validation', f'./oid/validation_{IMAGE_SIZE}')
+            resize_images('./oid/validation',
+                          f'./oid/validation_{IMAGE_SIZE}', dimensions)
             print('Resized Validation')
-            resize_images('./oid/train_segments_people', f'./oid/train_segments_people_{IMAGE_SIZE}')
+            resize_images('./oid/train_segments_people',
+                          f'./oid/train_segments_people_{IMAGE_SIZE}', dimensions)
             print('Resized Training Segments')
-            resize_images('./oid/validation_segments_people', f'./oid/validation_segments_people_{IMAGE_SIZE}')
+            resize_images('./oid/validation_segments_people',
+                          f'./oid/validation_segments_people_{IMAGE_SIZE}', dimensions)
             print('Resized Validation Segments')
             print('Done')
             exit(0)
         elif GH_DATASET:
-            resize_images('./gh_dataset/train/', f'./gh_dataset/train_{IMAGE_SIZE}')
-            resize_images('./gh_dataset/segments/', f'./gh_dataset/segments_{IMAGE_SIZE}')
+            resize_images('./gh_dataset/train/',
+                          f'./gh_dataset/train_{IMAGE_SIZE}', dimensions)
+            resize_images('./gh_dataset/segments/',
+                          f'./gh_dataset/segments_{IMAGE_SIZE}', dimensions)
     if TRAIN_MODE:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
