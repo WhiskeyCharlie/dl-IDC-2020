@@ -1,6 +1,7 @@
 import cv2 as cv
 import numpy as np
 import torch
+import torchvision.transforms as transforms
 from PIL import Image
 
 
@@ -35,3 +36,8 @@ def clean_up_mask(mask: Image):
 
 def _cv_image_to_pil(image) -> Image:
     return Image.fromarray(cv.cvtColor(image, cv.COLOR_BGR2RGB))
+
+
+def normalize_image_to_tensor(img: Image, output_size):
+    resized_img = img.resize((output_size, output_size))
+    return transforms.PILToTensor()(resized_img).float() / 255.0
