@@ -18,7 +18,7 @@ WEBCAM_OUTPUT_RESOLUTION = (640, 640)
 BACKGROUND_IMAGE = './images/background_apartment.webp'
 FAKE_WEBCAM_PATH = '/dev/video2'
 DESIRED_FPS = 30
-MODEL_PATH = './saved_models/unet_128x_50e_2021-02-18-00-16.pt'
+MODEL_PATH = './saved_models/unet_128x_50e_2021-02-18-19-45.pt'
 
 
 def remove_background_single_image(src_image: Union[str, Image.Image], model: UNET, background_image=None) -> Image:
@@ -43,9 +43,9 @@ def remove_background_single_image(src_image: Union[str, Image.Image], model: UN
 
 
 def emulate_webcam_loop(model: UNET, input_camera, output_camera):
-    told_to_exit = False
-    while not told_to_exit:
-        try:
+    try:
+        while True:
+            start = time.time()
             ret, frame = input_camera.read()
             if not ret:
                 print('Failed to read frame from actual webcam', file=sys.stderr)
@@ -55,10 +55,9 @@ def emulate_webcam_loop(model: UNET, input_camera, output_camera):
             result = remove_background_single_image(Image.fromarray(frame).resize(WEBCAM_OUTPUT_RESOLUTION),
                                                     model, background_image=BACKGROUND_IMAGE)
             output_camera.schedule_frame(np.asarray(result))
-            time.sleep(1 / DESIRED_FPS)
-        except KeyboardInterrupt:
-            told_to_exit = True
-            print('Shutting down.')
+            time.sleep(max(0, round((1 / DESIRED_FPS) - (time.time() - start))))
+    except KeyboardInterrupt:
+        print('Shutting down.')
     del input_camera
     exit(0)
 

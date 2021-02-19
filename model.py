@@ -10,8 +10,10 @@ class UNET(nn.Module):
         self.conv2 = self.contract_block(32, 64, 3, 1)
         self.conv3 = self.contract_block(64, 128, 3, 1)
         self.conv4 = self.contract_block(128, 256, 3, 1)
+        self.conv5 = self.contract_block(256, 512, 3, 1)
 
-        self.up_conv4 = self.expand_block(256, 128, 3, 1)
+        self.up_conv5 = self.expand_block(512, 256, 3, 1)
+        self.up_conv4 = self.expand_block(256 * 2, 128, 3, 1)
         self.up_conv3 = self.expand_block(128 * 2, 64, 3, 1)
         self.up_conv2 = self.expand_block(64 * 2, 32, 3, 1)
         self.up_conv1 = self.expand_block(32 * 2, out_channels, 3, 1)
@@ -21,8 +23,10 @@ class UNET(nn.Module):
         conv2 = self.conv2(conv1)
         conv3 = self.conv3(conv2)
         conv4 = self.conv4(conv3)
+        conv5 = self.conv5(conv4)
 
-        up_conv4 = self.up_conv4(conv4)
+        up_conv5 = self.up_conv5(conv5)
+        up_conv4 = self.up_conv4(torch.cat([up_conv5, conv4], 1))
         up_conv3 = self.up_conv3(torch.cat([up_conv4, conv3], 1))
 
         up_conv2 = self.up_conv2(torch.cat([up_conv3, conv2], 1))

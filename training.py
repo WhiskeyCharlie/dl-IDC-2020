@@ -20,7 +20,7 @@ from utils import resize_images
 BATCH_SIZE = 10
 IMAGE_SIZE = 128
 NUM_EPOCHS = 50
-VALID_EVAL = True
+VALID_EVAL = False
 RESIZE_ALL = False
 TRAIN_MODE = True
 CONT_TRAIN = False
