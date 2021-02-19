@@ -1,5 +1,6 @@
 import glob
 import os
+from pathlib import Path
 from typing import Tuple
 
 import cv2 as cv
@@ -46,7 +47,7 @@ def normalize_image_to_tensor(img: Image, output_size):
     return transforms.PILToTensor()(resized_img).float() / 255.0
 
 
-def resize_images(src_directory: str, target_directory: str, dimensions: Tuple[int, int]):
+def resize_images(src_directory: Path, target_directory: Path, dimensions: Tuple[int, int]):
     src_files = glob.glob(os.path.join(src_directory, '*'))
     for src_img_path in src_files:
         base_src_file_name = os.path.basename(src_img_path)

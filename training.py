@@ -3,6 +3,7 @@ import sys
 import time
 import warnings
 from collections import defaultdict
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -26,8 +27,8 @@ TRAIN_MODE = True
 CONT_TRAIN = False
 OI_DATASET = False
 GH_DATASET = True
-CONT_MODEL = ''
-EVAL_MODEL = ''
+CONT_MODEL = Path('')
+EVAL_MODEL = Path('')
 FIRST_CHAR = '0'
 
 
@@ -133,7 +134,7 @@ def load_gh_images():
     return train_loader, test_loader
 
 
-def evaluate_valid_images(model_path='./unet.pt', evaluate_some_test=False):
+def evaluate_valid_images(model_path=Path().cwd() / 'unet.pt', evaluate_some_test=False):
     network = UNET(3, 1)
     network.load_state_dict(torch.load(model_path))
     network.eval()
@@ -172,25 +173,24 @@ def main():
     if RESIZE_ALL:
         dimensions = (IMAGE_SIZE, IMAGE_SIZE)
         if OI_DATASET:
-            resize_images('./oid/train/',
-                          f'./oid/train_{IMAGE_SIZE}', dimensions)
+            resize_images(Path.cwd() / 'oid' / 'train', Path.cwd() / 'oid' / f'train_{IMAGE_SIZE}', dimensions)
             print('Resized Training')
-            resize_images('./oid/validation',
-                          f'./oid/validation_{IMAGE_SIZE}', dimensions)
+            resize_images(Path.cwd() / 'oid' / 'validation',
+                          Path.cwd() / 'oid' / f'validation_{IMAGE_SIZE}', dimensions)
             print('Resized Validation')
-            resize_images('./oid/train_segments_people',
-                          f'./oid/train_segments_people_{IMAGE_SIZE}', dimensions)
+            resize_images(Path.cwd() / 'oid' / 'train_segments_people',
+                          Path.cwd() / 'oid' / f'train_segments_people_{IMAGE_SIZE}', dimensions)
             print('Resized Training Segments')
-            resize_images('./oid/validation_segments_people',
-                          f'./oid/validation_segments_people_{IMAGE_SIZE}', dimensions)
+            resize_images(Path.cwd() / 'oid' / 'validation_segments_people',
+                          Path.cwd() / 'oid' / f'validation_segments_people_{IMAGE_SIZE}', dimensions)
             print('Resized Validation Segments')
             print('Done')
             exit(0)
         elif GH_DATASET:
-            resize_images('./gh_dataset/train/',
-                          f'./gh_dataset/train_{IMAGE_SIZE}', dimensions)
-            resize_images('./gh_dataset/segments/',
-                          f'./gh_dataset/segments_{IMAGE_SIZE}', dimensions)
+            resize_images(Path.cwd() / 'gh_dataset' / 'train',
+                          Path.cwd() / 'gh_dataset' / f'train_{IMAGE_SIZE}', dimensions)
+            resize_images(Path.cwd() / 'gh_dataset' / 'segments',
+                          Path.cwd() / 'gh_dataset' / f'segments_{IMAGE_SIZE}', dimensions)
     if TRAIN_MODE:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
@@ -208,18 +208,19 @@ def main():
                     print('Training Continuation failed', file=sys.stderr)
                     exit(1)
             # pos_weight = train_dl.positive_class_weight()
-            pw = torch.FloatTensor([5])
+            pw = torch.FloatTensor([5])  # Determined experimentally, seems to work well as true class weight
             loss_fn = torch.nn.BCEWithLogitsLoss(pos_weight=pw)
             optimizer = torch.optim.SGD(network.parameters(), lr=0.1, momentum=0.9, nesterov=True, weight_decay=0.01)
             scheduler = StepLR(optimizer, step_size=3, gamma=0.5)
             train_loss, validation_loss, accuracy, inform, mcc = train(network, train_dl, valid_dl, loss_fn, optimizer,
                                                                        scheduler, metrics, epochs=NUM_EPOCHS)
             cont_str = '_c' if CONT_TRAIN else ''
-            model_name = f'./saved_models/unet_{IMAGE_SIZE}x_{NUM_EPOCHS}e_{get_sortable_timestamp()}{cont_str}'
-            model_path = f'{model_name}.pt'
+            model_name = \
+                Path.cwd() / 'saved_models' / f'unet_{IMAGE_SIZE}x_{NUM_EPOCHS}e_{get_sortable_timestamp()}{cont_str}'
+            model_path = Path(f'{model_name}.pt')
             torch.save(network.state_dict(), model_path)
             plot_train_valid_loss(train_loss, validation_loss, f'{model_name}_loss.png')
-            plot_metrics(accuracy, inform, mcc, f'{model_name}_metrics.png')
+            plot_metrics(accuracy, inform, mcc, Path(f'{model_name}_metrics.png'))
             if VALID_EVAL:
                 evaluate_valid_images(model_path)
             exit(0)

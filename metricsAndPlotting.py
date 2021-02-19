@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import List
 
 import matplotlib.pyplot as plt
@@ -19,7 +20,7 @@ def plot_train_valid_loss(train_loss: List[float], valid_loss: List[float], plot
     plt.clf()
 
 
-def plot_metrics(accuracy, inform, mcc, plot_path):
+def plot_metrics(accuracy, inform, mcc, plot_path: Path):
     for phase in ['train', 'valid']:
         accuracy_p, inform_p, mcc_p = accuracy[phase], inform[phase], mcc[phase]
         epochs = list(range(1, len(accuracy_p) + 1))
@@ -33,7 +34,7 @@ def plot_metrics(accuracy, inform, mcc, plot_path):
         plt.ylim((-1, 1))
         plt.legend()
         plt.grid()
-        plt.savefig(plot_path.replace('.png', f'_{phase}.png'), dpi=300)
+        plt.savefig(str(plot_path).replace('.png', f'_{phase}.png'), dpi=300)
         plt.clf()
 
 
