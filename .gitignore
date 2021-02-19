@@ -10,5 +10,6 @@ val2017
 .idea/
 annotations_trainval2017
 images/
-saved_models/
+old_saved_models/
+saved_models/*.png
 unet.pt

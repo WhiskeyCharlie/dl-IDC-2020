@@ -15,22 +15,17 @@ from training import IMAGE_SIZE
 from utils import normalize_image_to_tensor
 
 WEBCAM_OUTPUT_RESOLUTION = (640, 640)
-BACKGROUND_IMAGE = './images/background_apartment.webp'
+BACKGROUND_IMAGE = './backgrounds/default_background.jpg'
 FAKE_WEBCAM_PATH = '/dev/video2'
 DESIRED_FPS = 30
-MODEL_PATH = './saved_models/unet_128x_50e_2021-02-18-19-45.pt'
+MODEL_PATH = './saved_models/default_model.pt'
 
 
-def remove_background_single_image(src_image: Union[str, Image.Image], model: UNET, background_image=None) -> Image:
+def remove_background_single_image(src_image: Union[str, Image.Image], model: UNET, background) -> Image:
     if type(src_image) == str:
         img = Image.open(src_image)
     else:
         img = src_image
-    if background_image is None:
-        background = Image.new('RGBA', img.size, (0, 255, 0))
-    else:
-        background = Image.open(background_image)
-        background = background.resize(img.size)
     img_tensor = normalize_image_to_tensor(img, IMAGE_SIZE).unsqueeze(0)
     res = model(img_tensor)
     mask = torch.gt(res.squeeze(0), 0.5)[0]
@@ -44,6 +39,7 @@ def remove_background_single_image(src_image: Union[str, Image.Image], model: UN
 
 def emulate_webcam_loop(model: UNET, input_camera, output_camera):
     try:
+        background_image = Image.open(BACKGROUND_IMAGE).resize(WEBCAM_OUTPUT_RESOLUTION)
         while True:
             start = time.time()
             ret, frame = input_camera.read()
@@ -53,7 +49,7 @@ def emulate_webcam_loop(model: UNET, input_camera, output_camera):
             # Open CV uses BGR instead of RGB, so we correct that with this line (otherwise I look blue)
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             result = remove_background_single_image(Image.fromarray(frame).resize(WEBCAM_OUTPUT_RESOLUTION),
-                                                    model, background_image=BACKGROUND_IMAGE)
+                                                    model, background_image.copy())
             output_camera.schedule_frame(np.asarray(result))
             time.sleep(max(0, round((1 / DESIRED_FPS) - (time.time() - start))))
     except KeyboardInterrupt:

@@ -168,7 +168,6 @@ def get_sortable_timestamp():
 
 
 def main():
-    torch.set_num_threads(20)
     print('Available Threads:', torch.get_num_threads())
     if RESIZE_ALL:
         dimensions = (IMAGE_SIZE, IMAGE_SIZE)
