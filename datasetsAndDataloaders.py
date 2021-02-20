@@ -73,7 +73,7 @@ class DatasetSegmentationOI(data.Dataset):
     def get_positive_weights(self):
         if self.total_pixels == 0:
             return 0
-        return self.total_positive_pixels / self.total_pixels
+        return (self.total_pixels - self.total_positive_pixels) / self.total_positive_pixels
 
     def __getitem__(self, index):
         if index not in self.cache:

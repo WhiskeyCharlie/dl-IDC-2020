@@ -21,15 +21,15 @@ from utils import resize_images
 BATCH_SIZE = 10
 IMAGE_SIZE = 128
 NUM_EPOCHS = 50
-VALID_EVAL = False
+VALID_EVAL = True
 RESIZE_ALL = False
 TRAIN_MODE = True
 CONT_TRAIN = False
 OI_DATASET = False
 GH_DATASET = True
-CONT_MODEL = Path('')
-EVAL_MODEL = Path('')
-FIRST_CHAR = '0'
+CONT_MODEL = Path('./saved_models/default_model.pt')
+EVAL_MODEL = Path('./saved_models/default_model.pt')
+FIRST_CHAR = '01'
 
 
 def train(model, train_dl, valid_dl, loss_fn, optimizer, scheduler, metrics_fn, epochs=1):
@@ -138,6 +138,7 @@ def evaluate_valid_images(model_path=Path().cwd() / 'unet.pt', evaluate_some_tes
     network = UNET(3, 1)
     network.load_state_dict(torch.load(model_path))
     network.eval()
+    plt.figure(figsize=(12, 12))
     train_dl, valid_dl = load_oi_images() if OI_DATASET else load_gh_images()
     for valid_img_batch, valid_mask_batch in valid_dl:
         predicted_batch = network(valid_img_batch).gt(0.5)
@@ -168,6 +169,7 @@ def get_sortable_timestamp():
 
 
 def main():
+    # torch.set_num_threads(20)
     print('Available Threads:', torch.get_num_threads())
     if RESIZE_ALL:
         dimensions = (IMAGE_SIZE, IMAGE_SIZE)
@@ -206,7 +208,7 @@ def main():
                 except:
                     print('Training Continuation failed', file=sys.stderr)
                     exit(1)
-            # pos_weight = train_dl.positive_class_weight()
+            # pw = torch.Tensor([train_dl.positive_class_weight()])
             pw = torch.FloatTensor([5])  # Determined experimentally, seems to work well as true class weight
             loss_fn = torch.nn.BCEWithLogitsLoss(pos_weight=pw)
             optimizer = torch.optim.SGD(network.parameters(), lr=0.1, momentum=0.9, nesterov=True, weight_decay=0.01)
